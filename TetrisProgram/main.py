@@ -8,7 +8,7 @@ import Block
 
 # 调试窗口
 team1="stupidAI1"
-team2="stupidAI1"
+team2="stupidAI2"
 STATIS = True  #返回战术统计
 
 #奖励字典
@@ -43,6 +43,7 @@ class Game:
         self.block = -1 # 本回合方块,初始化为 -1
         self.teamname = [teamfirst,teamlast]
         self.state = "gaming"
+        self.limit = limit
         self.time1 = limit # 玩家1剩余时间
         self.time2 = limit # 玩家2剩余时间
         self.board = Board.Board(PeaceAreaWidth, BattleAreaWidth) # 棋盘
@@ -67,18 +68,23 @@ class Game:
         self.overtakeNum = 0
         self.maxCombo = 0
 
+        # 报错信息记录
+        self.errors = [None] * 2
+
         # 读入玩家程序,读不到判负
         try:
             self.player.append(import_by_name(teamfirst, True))
-        except:
+        except Exception as e:
             self.winner = 2
             print("p1 ai missing")
             self.state = "judge to end"
             self.tag.append(["p1 ai missing", "grey"])
             self.reviewData.gameData["reason"] = "对方失踪"
+            self.errors[0] = e
         try:
             self.player.append(import_by_name(teamlast, False))
-        except:
+        except Exception as e:
+            self.errors[1] = e
             if self.state == "judge to end":
                 print("p2 ai missing")
                 self.winner = -1
@@ -96,17 +102,18 @@ class Game:
         self.matchdata.block = self.block
         self.matchdata.time1 = self.time1
         self.matchdata.time2 = self.time2
-        self.matchdata.board = copy.deepcopy(self.board.list)
+        self.matchdata.board = list(map(list, self.board.list))
         self.matchdata.pack = copy.deepcopy(self.pack)
         self.matchdata.point1 = self.point1
         self.matchdata.point2 = self.point2
         self.matchdata.time = self.time
+        self.matchdata.removeline = self.removeline
         self.matchdata.combo = self.combo
 
     # 记录复盘数据
     def saveToReviewData(self):
         self.reviewData.chessboardData['round'] = (self.time + 1)//2
-        self.reviewData.chessboardData['board'] = copy.deepcopy(self.visualBoard.list)
+        self.reviewData.chessboardData['board'] = list(map(list, self.visualBoard.list))
         self.reviewData.chessboardData['point1'] = self.point1
         self.reviewData.chessboardData['point2'] = self.point2
         self.reviewData.chessboardData['combo'] = self.combo
@@ -116,7 +123,7 @@ class Game:
     # 寻找有效落块位置
     def checkValidAction(self):
         player = 1 if self.isFirst else 2
-        validAction = self.matchdata.getAllValidActionRepeating(self.block, self.board.list)
+        validAction = self.matchdata.getAllValidAction(self.block, self.board.list)
         # 无路可走,溢出
         if len(validAction) == 0:
             self.state = 'p{} overflow'.format(player)
@@ -134,12 +141,13 @@ class Game:
         T1 = time.time()
         try:
             action = self.player[player - 1].output(self.matchdata)
-        except Exception: # 程序出错
+        except Exception as e: # 程序出错
             print("p{} ai error!".format(player))
             self.state = 'p{} error'.format(player)
             self.winner = 2 if self.isFirst else 1
             self.tag.append(["p{} 程序出错".format(player), "grey"])
             self.reviewData.gameData["reason"] = "对方出错"
+            self.errors[player - 1] = e
             return None
         T2 = time.time() # 决策结束, 计时结束
     
@@ -258,11 +266,7 @@ class Game:
     # 每个回合都要进行的游戏
     def turn(self):
         self.time += 1
-        if self.time == 560:
-            self.state = "round limit" # 达到回合数上限
-            self.reviewData.gameData["reason"] = "{}:{}".format(self.point1, self.point2)
         self.block = self.pack.get(self.time) # 取出下一块
-        
         if self.time % 2 == 1: # 先手玩家操作
             self.round += 1
             self.isFirst = True
@@ -291,19 +295,26 @@ class Game:
             self.board.reverse() # 把棋盘翻转回去
             self.visualBoard.reverse()
             self.saveFrameAfterErase()
+        if self.time == 560:
+            self.state = "round limit" # 达到回合数上限
+            self.reviewData.gameData["reason"] = "{}:{}".format(self.point1, self.point2)
             
     def sta(self):
-        a=self.stas
-        print('双方最高连击{}次'.format(a[0]))
-        print("玩家1"," 分数",self.point1,end=" ")
-        print("偷消{}次 连击奖励{}分".format(a[1][9],a[1][10]))
-        print("和平区  单消{}次 双消{}次 三消{}次".format(a[1][3],a[1][4],a[1][5]))
-        print("战斗区  单消{}次 双消{}次 三消{}次".format(a[1][6],a[1][7],a[1][8]))
+        a = self.stas
+        print("{}:{}".format(self.point1, self.point2))
+        print("最高连击: {}".format(a[0]))
+        print("玩家1")
+        print("平均耗时{:.3f}ms".format(1000*(self.limit-self.time1)/self.round), end=" ")
+        print("偷消:{} 连击奖励:{}".format(a[1][9],a[1][10]))
+        print("和平区  单消:{} 双消:{} 三消:{}".format(a[1][3],a[1][4],a[1][5]))
+        print("战斗区  单消:{} 双消:{} 三消:{}".format(a[1][6],a[1][7],a[1][8]))
         
-        print("玩家2"," 分数",self.point2,end=" ")
-        print("偷消{}次 连击奖励{}分".format(a[2][9],a[2][10]))
-        print("和平区  单消{}次 双消{}次 三消{}次".format(a[2][3],a[2][4],a[2][5]))
-        print("战斗区  单消{}次 双消{}次 三消{}次".format(a[2][6],a[2][7],a[2][8]))
+        print("玩家2")
+        print("平均耗时{:.3f}ms".format(1000*(self.limit-self.time2)/self.round), end=" ")
+        print("偷消:{} 连击奖励:{}".format(a[2][9],a[2][10]))
+        print("和平区  单消:{} 双消:{} 三消:{}".format(a[2][3],a[2][4],a[2][5]))
+        print("战斗区  单消:{} 双消:{} 三消:{}".format(a[2][6],a[2][7],a[2][8]))
+        if self.errors != [None, None]: print(self.errors)
         
 
     # 游戏结束的广播
@@ -340,7 +351,7 @@ if __name__ == "__main__":
     import os
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-    play = Game(team1,team2,10)
+    play = Game(team1,team2,20)
     while play.state == "gaming":
         play.turn()
     play.end()
